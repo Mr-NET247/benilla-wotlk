@@ -757,3 +757,46 @@ fn the_macro_editor_takes_a_shift_click_and_only_a_shift_click() {
     );
     assert!(s.take_spell_casts().is_empty());
 }
+
+#[test]
+fn controller_spellbook_assigns_and_replaces_a_slot_without_casting() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = spellbook_ui(1024.0, 768.0);
+    s.set_spellbook(book());
+    s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+    s.run("ToggleSpellBook(BOOKTYPE_SPELL)").unwrap();
+    s.resolve();
+    s.run(include_str!("../ipad/spellbook.lua")).unwrap();
+
+    s.run("BenillaControllerSpellbook(0, 0, 0, false, false, true)")
+        .unwrap();
+    s.run("BenillaControllerSpellbook(0, 0, 0, true, false, true)")
+        .unwrap();
+    assert!(
+        s.take_action_sets().is_empty(),
+        "choosing a spell waits for a destination"
+    );
+    s.run("BenillaControllerSpellbook(1, 0, 0, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_action_sets(), vec![(2, 133)]);
+    assert!(s.take_spell_casts().is_empty());
+    assert!(s.cursor_payload().is_none());
+
+    // Select the second spell and replace the same occupied slot.
+    s.run("BenillaControllerSpellbook(1, 0, 0, true, false, true)")
+        .unwrap();
+    s.run("BenillaControllerSpellbook(1, 0, 0, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_action_sets(), vec![(2, 2136)]);
+    assert!(
+        s.cursor_payload().is_none(),
+        "the replaced spell is released from the cursor"
+    );
+
+    // A cancelled assignment leaves the action bar alone.
+    s.run("BenillaControllerSpellbook(0, 0, 0, true, false, true)")
+        .unwrap();
+    s.run("BenillaControllerSpellbook(0, 0, 0, false, true, true)")
+        .unwrap();
+    assert!(s.take_action_sets().is_empty());
+}

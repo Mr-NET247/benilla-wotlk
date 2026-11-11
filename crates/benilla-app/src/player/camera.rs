@@ -1028,27 +1028,13 @@ pub(super) fn run_look_session(
     // Look rotation; a right-drag also turns the character.
     if let Some(active) = rig.look {
         let delta = motion;
-        let d_yaw = -delta.x * yaw_rate;
-        cam.yaw += d_yaw;
-        // `mouseInvertPitch` flips only the pitch axis.
-        let dy = if look_cfg.invert_pitch {
-            -delta.y
-        } else {
-            delta.y
-        };
-        // The pivot's fork: a pinned camera looking level or up, dragged mostly vertically, spends
-        // the delta on the pitch bias; `None` means the integrator does not run.
-        let d_pitch = -dy * pitch_rate;
-        if let Some(d_pitch) = rig.smart_pivot.route_pitch(
-            d_pitch,
-            d_yaw,
-            cam.pitch,
-            &dynamics.subject,
-            rig.clipped,
-            &dynamics.options,
-        ) {
-            cam.pitch = (cam.pitch + d_pitch).clamp(-CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
-        }
+        let pitch_direction = if look_cfg.invert_pitch { -1.0 } else { 1.0 };
+        rig.rotate_view(
+            cam,
+            dynamics,
+            -delta.x * yaw_rate,
+            -delta.y * pitch_rate * pitch_direction,
+        );
         if active == LookButton::Right || both_buttons {
             *face_yaw = cam.yaw;
         }
@@ -1056,6 +1042,29 @@ pub(super) fn run_look_session(
     // Freelook is right-held mouse-look or a both-button run, which steers like it; a left-drag
     // orbit is not. This test and the `face_yaw` sync above must stay alike.
     rig.freelook = rig.look == Some(LookButton::Right) || (rig.look.is_some() && both_buttons);
+}
+
+impl CameraControl {
+    pub(super) fn rotate_view(
+        &mut self,
+        cam: &mut FlyCam,
+        dynamics: &DynamicsInput,
+        d_yaw: f32,
+        d_pitch: f32,
+    ) {
+        cam.yaw += d_yaw;
+        // A pinned camera looking level or up may spend the vertical delta on pitch bias.
+        if let Some(d_pitch) = self.smart_pivot.route_pitch(
+            d_pitch,
+            d_yaw,
+            cam.pitch,
+            &dynamics.subject,
+            self.clipped,
+            &dynamics.options,
+        ) {
+            cam.pitch = (cam.pitch + d_pitch).clamp(-CAM_PITCH_LIMIT, CAM_PITCH_LIMIT);
+        }
+    }
 }
 
 /// Start `button`'s look session: stash the cursor, then lock and hide it until the session ends,
@@ -1272,7 +1281,7 @@ pub(super) fn seat_camera(
     // held drag takes no carry. The auto-follow writes an absolute yaw, where the reference stores
     // the offset and re-adds the facing at render time: the same picture, so Never leaves this
     // carry running.
-    let look_held = rig.look.is_some();
+    let look_held = rig.look.is_some() || rig.freelook;
     if !look_held {
         cam.yaw += turn_delta;
     }

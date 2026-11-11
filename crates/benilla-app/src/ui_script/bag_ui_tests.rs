@@ -406,3 +406,36 @@ fn a_click_place_and_a_drag_each_move_a_bag_item_into_an_empty_slot() {
     let errors = bag_errors(s.take_errors());
     assert!(errors.is_empty(), "bag errors: {errors:#?}");
 }
+
+#[test]
+fn controller_inventory_navigates_uses_items_and_closes_the_bags() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = super::layer_tests::production_load_with("controller-bags", false, "", |_| {});
+    push_bags(&mut s);
+    s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+    s.fire_event("BAG_UPDATE", vec![ScriptValue::Int(0)]);
+    s.run("OpenAllBags()").unwrap();
+    s.resolve();
+    s.run(include_str!("../ipad/inventory.lua")).unwrap();
+
+    s.run("BenillaControllerInventory(0, 0, 0, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_container_uses(), vec![(0, 1)]);
+    s.run("BenillaControllerInventory(1, 0, 0, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_container_uses(), vec![(0, 2)]);
+    s.run("BenillaControllerInventory(0, 0, 1, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_container_uses(), vec![(1, 1)]);
+    assert!(s.take_container_moves().is_empty());
+    assert!(s.cursor_payload().is_none());
+
+    s.run("BenillaControllerInventory(0, 0, 0, false, true, true)")
+        .unwrap();
+    assert!(!s
+        .eval::<bool>("return ContainerFrame1:IsVisible()")
+        .unwrap());
+}

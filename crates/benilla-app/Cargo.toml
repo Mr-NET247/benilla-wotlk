@@ -19,14 +19,9 @@ trace_chrome = ["bevy/trace_chrome"]
 
 [dependencies]
 anyhow.workspace = true
-# The EditBox clipboard, on the main thread as NSPasteboard requires; bevy_egui's 3.x.
-arboard = "3"
 benilla-ui = { path = "../benilla-ui" }
 bevy.workspace = true
 wgpu.workspace = true
-# The debug panel, `dev` only, yet a dependency of every build: as an optional one it would turn
-# on Bevy, `syn` and `ttf-parser` features the player build lacks, and its tests would rebuild Bevy.
-bevy_egui = "0.39"
 bytemuck = { version = "1", features = ["derive"] }
 # `f16` decode for the `WOW_BOOTH_DUMP` dump of the `Rgba16Float` booth targets.
 half = "2"
@@ -73,9 +68,19 @@ mint = "0.5"
 # The gossip greeting's weighted draw, re-rolled per open as in the reference.
 rand = "0.8"
 
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+arboard = "3"
+bevy_egui = "0.39"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+security-framework = "3.7"
+bevy_egui = { version = "0.39", default-features = false, features = ["default_fonts", "bevy_ui", "picking"] }
+objc2-ios = { package = "objc2", version = "0.6" }
+objc2-foundation-ios = { package = "objc2-foundation", version = "0.3", default-features = false, features = ["std", "NSPathUtilities", "NSString"] }
+
 # Wayland clipboard over the standard `wl_data_device`; arboard's speaks `wlr-data-control`,
 # which GNOME does not implement.
-[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))'.dependencies]
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android", target_os = "ios"))))'.dependencies]
 raw-window-handle = "0.6"
 smithay-clipboard = "0.7"
 

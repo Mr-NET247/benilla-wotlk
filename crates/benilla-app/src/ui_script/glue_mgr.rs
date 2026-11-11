@@ -957,6 +957,15 @@ impl GlueMgr {
         self.cells = LoginCells::default();
         self.auth_final = false;
         s.set_glue_saved_account(saved_account);
+        // The iPad port extends the stock checkbox to include its Keychain login.
+        // The Home gesture replaces the login screen's desktop Quit button.
+        #[cfg(target_os = "ios")]
+        if let Err(error) = s.run(
+            "if AccountLoginSaveAccountNameText then AccountLoginSaveAccountNameText:SetText('Remember login on this iPad') end
+             if AccountLoginExitButton then AccountLoginExitButton:Hide() end",
+        ) {
+            warn!("login: could not set up the iPad login controls: {error}");
+        }
         s.set_glue_realm_cells(self.realm_cells);
         s.set_glue_select_cells(self.select_cells);
         if !self.scripted_read {

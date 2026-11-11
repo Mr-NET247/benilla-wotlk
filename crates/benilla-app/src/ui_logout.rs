@@ -124,6 +124,13 @@ pub(crate) fn drain_logout(
         return;
     };
     for request in script.take_session_requests() {
+        // UIKit leaves the app running after a programmatic exit. Camp normally so
+        // the server saves the character and the player can leave via the Home gesture.
+        #[cfg(target_os = "ios")]
+        let request = match request {
+            SessionRequest::Quit | SessionRequest::ForceQuit => SessionRequest::Logout,
+            request => request,
+        };
         match request {
             SessionRequest::Logout | SessionRequest::Quit => {
                 // The reference bails silently while a request is pending, before the quit byte is

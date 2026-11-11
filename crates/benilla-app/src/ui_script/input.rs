@@ -66,6 +66,18 @@ fn feed_wheel(
     }
 }
 
+/// A world tap on iPad uses the stock chat cancel handler, just like Escape.
+#[cfg(any(target_os = "ios", test))]
+pub(super) fn dismiss_chat_on_world_tap(script: &mut UiScript) -> bool {
+    script.has_keyboard_focus()
+        && script.focused_editbox_name().is_some_and(|name| {
+            name.strip_prefix("ChatFrame")
+                .and_then(|name| name.strip_suffix("EditBox"))
+                .is_some_and(|number| number.parse::<u32>().is_ok())
+        })
+        && script.key_input("ESCAPE")
+}
+
 /// Feeds cursor, buttons, wheel and keys into the UI engine, publishing [`PlayerUiHover`] (the
 /// pointer arbiter yields to the UI) and [`UiKeyboardCapture`] (a key a box or frame ate never
 /// fires its binding). Runs in the `UiInput` set, before `WorldStage::Input` and every key reader.
@@ -165,6 +177,14 @@ pub(super) fn feed_ui_input(
         }
         for (btn, name) in UI_MOUSE_BUTTONS {
             if buttons.just_pressed(btn) {
+                #[cfg(target_os = "ios")]
+                if btn == MouseButton::Left
+                    && hover.0.is_none()
+                    && dismiss_chat_on_world_tap(&mut script)
+                {
+                    click_consumed.0 = true;
+                    continue;
+                }
                 // A payload over terrain or the sky claims the click: those legs prompt, not select.
                 if btn == MouseButton::Left && hover.0.is_none() {
                     use benilla_ui::script::WorldPick;
@@ -214,6 +234,10 @@ pub(super) fn feed_ui_input(
             continue;
         }
         let named = match ev.key_code {
+            // The iPad keyboard's UIKeyInput bridge delivers Return as text.
+            _ if cfg!(target_os = "ios") && matches!(ev.text.as_deref(), Some("\n" | "\r")) => {
+                Some("ENTER")
+            }
             KeyCode::Enter | KeyCode::NumpadEnter => Some("ENTER"),
             KeyCode::Escape => Some("ESCAPE"),
             KeyCode::Tab => Some("TAB"),

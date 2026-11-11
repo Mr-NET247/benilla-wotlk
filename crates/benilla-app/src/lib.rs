@@ -103,6 +103,8 @@ mod script_calls;
 mod shaders;
 
 mod game_tip;
+#[cfg(target_os = "ios")]
+mod ipad;
 mod item_names;
 mod opaque2d;
 /// Where "the client is going down" is observed, in `Last`; every system that persists state on the
@@ -121,6 +123,8 @@ pub(crate) mod test_support;
 mod text_filter;
 mod text_reshape;
 mod textinput;
+#[cfg(target_os = "ios")]
+pub use ipad::run_ipad;
 mod transport;
 mod tutorial;
 mod ui_achievement;
@@ -467,7 +471,7 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
         focused: !background,
         // Shown once fitted to the monitor (`video::BootReveal`), never at the OS's default spot
         // and size, unpainted.
-        visible: false,
+        visible: cfg!(target_os = "ios"),
         window_level: if background {
             bevy::window::WindowLevel::AlwaysOnBottom
         } else {

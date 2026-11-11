@@ -9,7 +9,17 @@ use benilla_app::BuildId;
 compile_error!("`standalone` is the player's drop-in build: build it with `--no-default-features`");
 
 fn main() -> benilla_app::AppExit {
-    benilla_app::run(BuildId {
+    #[cfg(target_os = "ios")]
+    {
+        benilla_app::run_ipad(build_id())
+    }
+
+    #[cfg(not(target_os = "ios"))]
+    benilla_app::run(build_id())
+}
+
+fn build_id() -> BuildId {
+    BuildId {
         version: env!("CARGO_PKG_VERSION"),
         describe: env!("BENILLA_GIT_DESCRIBE"),
         sha: env!("BENILLA_GIT_SHA"),
@@ -19,5 +29,5 @@ fn main() -> benilla_app::AppExit {
         project_dir: env!("BENILLA_PROJECT_DIR"),
         standalone: cfg!(feature = "standalone"),
         ..Default::default()
-    })
+    }
 }

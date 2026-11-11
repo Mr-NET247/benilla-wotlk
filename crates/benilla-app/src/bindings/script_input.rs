@@ -87,7 +87,7 @@ impl BindingsState {
                 // new edge.
                 BindingInput::Start(held) => {
                     let i = held_input(held);
-                    if !self.pressed(i) {
+                    if !self.held.contains(&i) {
                         self.just.push(i);
                         self.held.push(i);
                         self.control_changed = true;
@@ -99,7 +99,7 @@ impl BindingsState {
                 // which the look's end reads.
                 BindingInput::Stop(held, keep_smoothing) => {
                     let i = held_input(held);
-                    if self.pressed(i) {
+                    if self.held.contains(&i) {
                         self.held.retain(|&h| h != i);
                         self.control_changed = true;
                         self.keep_smoothing = keep_smoothing;

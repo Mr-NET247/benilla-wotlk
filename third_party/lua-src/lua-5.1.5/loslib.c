@@ -36,11 +36,11 @@ static int os_pushresult (lua_State *L, int i, const char *filename) {
 
 
 static int os_execute (lua_State *L) {
-#if !defined(__wasi__)
+#if !defined(__wasi__) && !defined(__ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__)
   lua_pushinteger(L, system(luaL_optstring(L, 1, NULL)));
   return 1;
 #else
-  luaL_error(L, "not supported on WASI");
+  return luaL_error(L, "not supported on this platform");
 #endif
 }
 
@@ -68,7 +68,7 @@ static int os_tmpname (lua_State *L) {
   lua_pushstring(L, buff);
   return 1;
 #else
-  luaL_error(L, "not supported on WASI");
+  return luaL_error(L, "not supported on this platform");
 #endif
 }
 
@@ -84,7 +84,7 @@ static int os_clock (lua_State *L) {
   lua_pushnumber(L, ((lua_Number)clock())/(lua_Number)CLOCKS_PER_SEC);
   return 1;
 #else
-  luaL_error(L, "not supported on WASI");
+  return luaL_error(L, "not supported on this platform");
 #endif
 }
 

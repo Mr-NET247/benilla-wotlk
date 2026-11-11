@@ -87,6 +87,10 @@ pub(crate) struct BindingsState {
     latched: Vec<(Held, String)>,
     /// The held bits a Start set and no Stop has cleared.
     held: Vec<Input>,
+    #[cfg(target_os = "ios")]
+    mobile_held: Vec<Input>,
+    #[cfg(target_os = "ios")]
+    pub(crate) mobile_look: Vec2,
     /// Inputs whose Start, or whose one-shot, came this frame (the press edge).
     just: Vec<Input>,
     /// One-shots fired this frame.
@@ -124,6 +128,10 @@ impl BindingsState {
     }
     /// Is a held bit set right now (the reference's input-control flag word)?
     pub(crate) fn pressed(&self, i: Input) -> bool {
+        #[cfg(target_os = "ios")]
+        if self.mobile_held.contains(&i) {
+            return true;
+        }
         self.held.contains(&i)
     }
     /// Did this bit's Start, or this one-shot, come this frame (the key-down edge)?
@@ -382,6 +390,7 @@ fn latch_and_dispatch(
     mut notches: Local<WheelNotches>,
     mut focus_lost: MessageReader<bevy::input::keyboard::KeyboardFocusLost>,
     cover: Option<Res<crate::loading_screen::LoadingScreen>>,
+    #[cfg(target_os = "ios")] mobile: Res<crate::ipad::MobileMovement>,
 ) {
     state.just.clear();
     state.fired.clear();
@@ -570,6 +579,29 @@ fn latch_and_dispatch(
     if let Some(s) = script.as_mut() {
         let inputs = s.take_binding_input();
         state.apply_script_input(inputs);
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        let previous = std::mem::take(&mut state.mobile_held);
+        for &input in &mobile.held {
+            if !previous.contains(&input) && !state.held.contains(&input) {
+                state.just.push(input);
+                state.control_changed = true;
+            }
+        }
+        if previous
+            .iter()
+            .any(|input| !mobile.held.contains(input) && !state.held.contains(input))
+        {
+            state.control_changed = true;
+        }
+        if mobile.held.contains(&Input::Ascend) && !previous.contains(&Input::Ascend) {
+            state.fired.push(Input::Jump);
+        }
+        state.mobile_held = previous;
+        state.mobile_held.clone_from(&mobile.held);
+        state.mobile_look = mobile.look;
     }
 }
 

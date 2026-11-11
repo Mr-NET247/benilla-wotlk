@@ -10,6 +10,8 @@
 //! Only an unattended run ([`crate::run_mode::unattended`]) reconnects, because a client that
 //! re-authenticates takes the account back from whoever displaced it.
 
+#[cfg(target_os = "ios")]
+mod ipad_credentials;
 pub(crate) mod queue;
 
 use std::sync::atomic::Ordering;
@@ -87,6 +89,10 @@ pub(crate) struct LoginIntent {
     retry_at: Option<f32>,
     /// The env fast path is read once, on the first policy run.
     env_read: bool,
+    #[cfg(target_os = "ios")]
+    remember_after_auth: Option<String>,
+    #[cfg(target_os = "ios")]
+    using_remembered: bool,
 }
 
 impl LoginIntent {
@@ -94,6 +100,11 @@ impl LoginIntent {
     pub(crate) fn clear(&mut self) {
         self.creds = None;
         self.retry_at = None;
+        #[cfg(target_os = "ios")]
+        {
+            self.remember_after_auth = None;
+            self.using_remembered = false;
+        }
     }
 
     /// The account this session authenticated as, from the env fast path or the screen; it
@@ -164,12 +175,26 @@ pub(crate) fn answer_glue(
     pick: Option<Res<crate::net::CharPick>>,
     realm: Option<Res<crate::net::RealmChoice>>,
     state: Res<State<ClientState>>,
-    time: Res<Time>,
+    #[cfg(not(target_os = "ios"))] time: Res<Time>,
     mut commands: Commands,
+    #[cfg(target_os = "ios")] cvars: Option<Res<crate::cvars::Cvars>>,
 ) {
     for ask in asks.read() {
         match ask {
-            GlueLogin::Submit { account, password } => attempt.send(account, password, true),
+            GlueLogin::Submit { account, password } => {
+                attempt.send(account, password, true);
+                #[cfg(target_os = "ios")]
+                {
+                    let saved = cvars.as_deref().and_then(|c| c.get(CVAR_ACCOUNT_NAME));
+                    attempt.intent.using_remembered = false;
+                    attempt.intent.remember_after_auth = saved
+                        .filter(|name| name.eq_ignore_ascii_case(account))
+                        .map(|_| attempt.realmlist.address().to_string());
+                    if saved == Some("") {
+                        ipad_credentials::forget();
+                    }
+                }
+            }
             GlueLogin::Abandon => {
                 close_logon(&attempt.abandon, &mut attempt.intent, realm.as_deref());
             }
@@ -186,8 +211,11 @@ pub(crate) fn answer_glue(
                 }
             }
             GlueLogin::Quit => {
-                info!("login: QuitGame");
-                commands.insert_resource(QuitArm(Some(time.elapsed_secs())));
+                #[cfg(not(target_os = "ios"))]
+                {
+                    info!("login: QuitGame");
+                    commands.insert_resource(QuitArm(Some(time.elapsed_secs())));
+                }
             }
         }
     }
@@ -216,6 +244,7 @@ fn drive_policy(
     mut failures: MessageReader<LoginFailedMessage>,
     mut disconnects: MessageReader<DisconnectedMessage>,
     mut exit: MessageWriter<AppExit>,
+    #[cfg(target_os = "ios")] cvars: Option<Res<crate::cvars::Cvars>>,
 ) {
     let now = time.elapsed_secs();
 
@@ -247,6 +276,22 @@ fn drive_policy(
                         "the account guard refused the only credentials this run has",
                     ) {
                         exit.write(AppExit::error());
+                    }
+                }
+            }
+        } else {
+            #[cfg(target_os = "ios")]
+            if !attempt.intent.in_flight {
+                if let Some(account) = cvars
+                    .as_deref()
+                    .and_then(|c| c.get(CVAR_ACCOUNT_NAME))
+                    .filter(|account| !account.is_empty())
+                {
+                    if let Some(password) =
+                        ipad_credentials::load(attempt.realmlist.address(), account)
+                    {
+                        attempt.send(account, &password, true);
+                        attempt.intent.using_remembered = true;
                     }
                 }
             }
@@ -286,6 +331,16 @@ fn drive_policy(
             Some(refusal) => {
                 // A refusal from either server: never retried.
                 let byte = refusal.byte();
+                #[cfg(target_os = "ios")]
+                if attempt.intent.using_remembered
+                    && matches!(
+                        refusal,
+                        benilla_protocol::LoginRefusal::Logon(4 | 5)
+                            | benilla_protocol::LoginRefusal::LogonProof(4 | 5)
+                    )
+                {
+                    ipad_credentials::forget();
+                }
                 warn!("login: refused ({refusal:?}, {byte:#04x}) — {}", msg.reason);
                 attempt.intent.clear();
                 if may_end_the_run
@@ -351,6 +406,7 @@ fn to_select_on_auth(
     mut next: ResMut<NextState<ClientState>>,
     abandon: Option<Res<LoginAbandon>>,
     pick: Option<Res<crate::net::CharPick>>,
+    #[cfg(target_os = "ios")] mut save_config: MessageWriter<crate::cvars::SaveConfig>,
 ) {
     // A message of an attempt a Cancel or a disconnect has passed since is not an edge: the
     // reference drops the socket there, so the session that parked behind the screen's back is
@@ -371,6 +427,13 @@ fn to_select_on_auth(
     }
     if !edge {
         return;
+    }
+    #[cfg(target_os = "ios")]
+    if let Some(host) = intent.remember_after_auth.take() {
+        if let Some((account, password)) = &intent.creds {
+            ipad_credentials::save(&host, account, password);
+        }
+        save_config.write(crate::cvars::SaveConfig);
     }
     intent.in_flight = false;
     intent.park = IoPark::Active;

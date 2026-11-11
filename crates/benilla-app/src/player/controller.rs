@@ -270,6 +270,14 @@ pub(super) fn control(
     if was_looking && rig.look.is_none() {
         rig.follow.sticky = binds.keep_smoothing();
     }
+    #[cfg(target_os = "ios")]
+    if focused && !covered && binds.mobile_look != Vec2::ZERO {
+        // A stick supplies a rate instead of mouse travel. Turn without grabbing the touch cursor.
+        let delta = binds.mobile_look * dt;
+        rig.rotate_view(&mut cam, &dynamics, -2.6 * delta.x, 1.8 * delta.y);
+        player.face_yaw = cam.yaw;
+        rig.freelook = true;
+    }
     // The mouse turns the view, but the body hand-off skips a body that is stunned, dead or seated
     // or not ours to drive (`control_lost`, `reseat`), while the camera rotate still runs. The
     // reference never writes the facing; writing and restoring is the same downstream. Standing up

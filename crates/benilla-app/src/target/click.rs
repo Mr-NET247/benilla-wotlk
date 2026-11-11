@@ -1288,6 +1288,89 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
 #[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Interact(pub Entity);
 
+/// Controller shortcut over the same lootable flags and reach as the normal dispatcher.
+#[cfg(any(target_os = "ios", test))]
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct NearbyLoot<'w, 's> {
+    player:
+        Query<'w, 's, (&'static Guid, &'static ObjectStore, &'static Transform), With<SelfPlayer>>,
+    candidates: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static Guid,
+            &'static crate::net::NetEntity,
+            &'static ObjectStore,
+            &'static Transform,
+        ),
+        Without<SelfPlayer>,
+    >,
+}
+
+#[cfg(any(target_os = "ios", test))]
+impl NearbyLoot<'_, '_> {
+    pub(crate) fn nearest(&self) -> Option<Entity> {
+        use benilla_protocol::EntityKind;
+
+        let (player_guid, player, origin) = self.player.single().ok()?;
+        self.candidates
+            .iter()
+            .filter_map(|(entity, guid, net, store, transform)| {
+                let reach = match net.kind {
+                    EntityKind::Unit | EntityKind::Player
+                        if store.0.unit_is_dead()
+                            && !store.0.unit_dynflag_dead()
+                            && store.0.unit_lootable() =>
+                    {
+                        cursor_mode::melee_reach(store, player)
+                    }
+                    EntityKind::Corpse
+                        if store.0.corpse_lootable()
+                            && store.0.corpse_owner() != Some(player_guid.0) =>
+                    {
+                        cursor_mode::MELEE_FLOOR
+                    }
+                    _ => return None,
+                };
+                let distance = origin.translation.distance_squared(transform.translation);
+                (distance <= reach * reach).then_some((distance, guid.0, entity))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)))
+            .map(|(_, _, entity)| entity)
+    }
+    /// The controller's talk shortcut uses the stock service flags and interaction range.
+    #[cfg(target_os = "ios")]
+    pub(crate) fn nearest_dialogue(&self, preferred: Option<Entity>) -> Option<Entity> {
+        use cursor_mode::npc_flags::{GOSSIP, QUESTGIVER, VENDOR};
+
+        let (_, _, origin) = self.player.single().ok()?;
+        self.candidates
+            .iter()
+            .filter_map(|(entity, guid, net, store, transform)| {
+                if net.kind != benilla_protocol::EntityKind::Unit
+                    || store.0.unit_reads_dead()
+                    || store.0.unit_npc_flags() & (GOSSIP | QUESTGIVER | VENDOR) == 0
+                {
+                    return None;
+                }
+                let distance = origin.translation.distance_squared(transform.translation);
+                (distance <= cursor_mode::unit_interact_reach_sq(store)).then_some((
+                    Some(entity) != preferred,
+                    distance,
+                    guid.0,
+                    entity,
+                ))
+            })
+            .min_by(|a, b| {
+                a.0.cmp(&b.0)
+                    .then_with(|| a.1.total_cmp(&b.1))
+                    .then_with(|| a.2.cmp(&b.2))
+            })
+            .map(|(_, _, _, entity)| entity)
+    }
+}
+
 /// Each [`Interact`], its object classified as a press over it would be.
 pub(super) fn act_on_interact(
     mut requests: MessageReader<Interact>,
@@ -3659,6 +3742,51 @@ mod tests {
             ))
             .id();
         (world, body, corpse, rx)
+    }
+
+    #[test]
+    fn nearby_loot_finds_the_closest_lootable_body_in_reach_without_selecting_it() {
+        use benilla_protocol::EntityKind;
+
+        let (mut world, body, corpse, rx) = loot_world(4.0, 0, true);
+        world.entity_mut(corpse).insert((
+            crate::net::NetEntity {
+                kind: EntityKind::Corpse,
+                display_id: None,
+                scale: 1.0,
+            },
+            Transform::from_xyz(0.0, 0.0, 3.0),
+        ));
+        let find = |world: &mut World| {
+            world
+                .run_system_once(|loot: NearbyLoot| loot.nearest())
+                .unwrap()
+        };
+
+        // The closer living vendor in the fixture is ignored.
+        assert_eq!(find(&mut world), Some(corpse));
+        world
+            .entity_mut(corpse)
+            .insert(Transform::from_xyz(0.0, 0.0, 6.0));
+        assert_eq!(find(&mut world), Some(body));
+        world
+            .entity_mut(body)
+            .insert(Transform::from_xyz(0.0, 0.0, -6.0));
+        assert_eq!(
+            find(&mut world),
+            None,
+            "Click to Move does not extend the search"
+        );
+        world
+            .entity_mut(body)
+            .insert(Transform::from_xyz(0.0, 0.0, -4.0));
+
+        let target = find(&mut world).unwrap();
+        interact_with(&mut world, target);
+        assert!(rx
+            .try_iter()
+            .any(|command| matches!(command, ClientCommand::Loot { guid: BODY })));
+        assert_eq!(world.resource::<Selection>().guid, None);
     }
 
     fn right_click_loot(world: &mut World, hovered: Hovered) {

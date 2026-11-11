@@ -134,6 +134,23 @@ fn input_editbox_enter_drains_the_typed_line() {
     assert!(s.take_chat_sends().is_empty(), "drained");
 }
 
+#[test]
+fn ipad_world_tap_cancels_chat_without_sending_or_blurring_other_boxes() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = chat_frame();
+    assert!(s.focus_editbox("ChatFrame1EditBox"));
+    s.char_input("unsent draft");
+    assert!(super::input::dismiss_chat_on_world_tap(&mut s));
+    assert!(!s.has_keyboard_focus());
+    assert!(s.take_chat_sends().is_empty());
+
+    s.run(r#"CreateFrame("EditBox", "OtherEditBox"):Show()"#)
+        .unwrap();
+    assert!(s.focus_editbox("OtherEditBox"));
+    assert!(!super::input::dismiss_chat_on_world_tap(&mut s));
+    assert!(s.has_keyboard_focus());
+}
+
 /// The language list seeds `editBox.language` with the first known language when it holds none
 /// (`LanguageMenu_LoadLanguages`, `ChatFrame.lua:4351-4369`), a pick from the chat menu's list
 /// replaces it (`:4371-4374`), and `ChatEdit_SendText` passes it on every send (`:3686`).

@@ -19,6 +19,7 @@ trait Pasteboard {
     fn name(&self) -> &'static str;
 }
 
+#[cfg(not(target_os = "ios"))]
 impl Pasteboard for arboard::Clipboard {
     fn read_text(&mut self) -> Result<Option<String>, String> {
         // `ContentNotAvailable` is arboard's empty clipboard, not a failure.
@@ -46,7 +47,10 @@ impl Pasteboard for arboard::Clipboard {
 }
 
 /// The Wayland half; the gate must match `smithay-clipboard`'s target in `Cargo.toml`.
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+))]
 mod wl {
     use super::Pasteboard;
 
@@ -77,7 +81,10 @@ mod wl {
 /// The primary window's `wl_display`, or `None` off Wayland, which selects [`arboard`]. Read from
 /// the window handle, not `WAYLAND_DISPLAY`, because `smithay-clipboard` needs winit's own
 /// connection.
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+))]
 pub(crate) fn wayland_display(handle: Option<&RawHandleWrapper>) -> Option<*mut c_void> {
     match handle?.get_display_handle() {
         raw_window_handle::RawDisplayHandle::Wayland(wl) => Some(wl.display.as_ptr()),
@@ -86,7 +93,10 @@ pub(crate) fn wayland_display(handle: Option<&RawHandleWrapper>) -> Option<*mut 
 }
 
 /// Off the Wayland-capable platforms the backend is always [`arboard`].
-#[cfg(not(all(unix, not(any(target_os = "macos", target_os = "android")))))]
+#[cfg(not(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+)))]
 pub(crate) fn wayland_display(_handle: Option<&RawHandleWrapper>) -> Option<*mut c_void> {
     None
 }
@@ -96,21 +106,71 @@ pub(crate) fn wayland_display(_handle: Option<&RawHandleWrapper>) -> Option<*mut
 /// # Safety
 /// `display` must be a live `wl_display` that outlives the returned backend; the window handle's
 /// `Arc` keeps the connection alive until app teardown drops the backend.
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+))]
 fn open_wayland(display: *mut c_void) -> Box<dyn Pasteboard> {
     // SAFETY: `display` is winit's own live `wl_display`, per the doc comment.
     Box::new(unsafe { smithay_clipboard::Clipboard::new(display) })
 }
 
-#[cfg(not(all(unix, not(any(target_os = "macos", target_os = "android")))))]
+#[cfg(not(all(
+    unix,
+    not(any(target_os = "macos", target_os = "android", target_os = "ios"))
+)))]
 fn open_wayland(_display: *mut c_void) -> Box<dyn Pasteboard> {
     unreachable!("wayland_display() only yields Some on Wayland-capable platforms")
+}
+
+#[cfg(not(target_os = "ios"))]
+fn open_native() -> Result<Box<dyn Pasteboard>, String> {
+    arboard::Clipboard::new()
+        .map(|clipboard| Box::new(clipboard) as Box<dyn Pasteboard>)
+        .map_err(|err| err.to_string())
+}
+
+#[cfg(target_os = "ios")]
+fn open_native() -> Result<Box<dyn Pasteboard>, String> {
+    use objc2_ios::{class, msg_send, rc::Retained, runtime::AnyObject};
+
+    // The caller is a main-thread Bevy system, as required by UIKit.
+    let clipboard: Option<Retained<AnyObject>> =
+        unsafe { msg_send![class!(UIPasteboard), generalPasteboard] };
+    clipboard
+        .map(|clipboard| Box::new(IosPasteboard(clipboard)) as Box<dyn Pasteboard>)
+        .ok_or_else(|| "UIPasteboard is unavailable".into())
+}
+
+#[cfg(target_os = "ios")]
+struct IosPasteboard(objc2_ios::rc::Retained<objc2_ios::runtime::AnyObject>);
+
+#[cfg(target_os = "ios")]
+impl Pasteboard for IosPasteboard {
+    fn read_text(&mut self) -> Result<Option<String>, String> {
+        use objc2_foundation_ios::NSString;
+        let text: Option<objc2_ios::rc::Retained<NSString>> =
+            unsafe { objc2_ios::msg_send![&*self.0, string] };
+        Ok(text
+            .map(|value| value.to_string())
+            .filter(|text| !text.is_empty()))
+    }
+
+    fn write_text(&mut self, text: &str) -> Result<(), String> {
+        let value = objc2_foundation_ios::NSString::from_str(text);
+        let _: () = unsafe { objc2_ios::msg_send![&*self.0, setString: &*value] };
+        Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "UIPasteboard"
+    }
 }
 
 /// The session's display-server variables, appended to the clipboard log lines, since a Linux
 /// paste failure depends on them.
 fn session_note() -> String {
-    if !cfg!(unix) || cfg!(target_os = "macos") {
+    if !cfg!(unix) || cfg!(any(target_os = "macos", target_os = "ios")) {
         return String::new();
     }
     let var = |k: &str| std::env::var(k).unwrap_or_else(|_| "unset".to_string());
@@ -139,8 +199,8 @@ impl HostClipboard {
         self.opened = true;
         self.backend = match wl_display {
             Some(display) => Some(open_wayland(display)),
-            None => match arboard::Clipboard::new() {
-                Ok(clipboard) => Some(Box::new(clipboard)),
+            None => match open_native() {
+                Ok(clipboard) => Some(clipboard),
                 Err(e) => {
                     warn!("clipboard: unavailable — {e}{}", session_note());
                     None

@@ -222,6 +222,68 @@ fn detail_panel_reward_grid_follows_the_refs_two_per_row_layout() {
         .unwrap());
 }
 
+#[test]
+fn controller_dialogue_advances_quests_and_confirms_a_reward_choice() {
+    use benilla_ui::script::QuestAction;
+
+    benilla_formats::wow_data_or_skip!();
+    let mut s = stock_ui(1024.0, 768.0);
+    s.run(include_str!("../ipad/dialogue.lua")).unwrap();
+    s.run("QUEST_FADING_DISABLE = '1'").unwrap();
+    seat_giver(&mut s, "Marshal McBride");
+
+    for (panel, event, completable, expected) in [
+        (
+            QuestPanel::Detail,
+            "QUEST_DETAIL",
+            false,
+            Some(QuestAction::Accept),
+        ),
+        (QuestPanel::Progress, "QUEST_PROGRESS", false, None),
+        (
+            QuestPanel::Progress,
+            "QUEST_PROGRESS",
+            true,
+            Some(QuestAction::Continue),
+        ),
+    ] {
+        s.fire_event("QUEST_FINISHED", vec![]);
+        s.take_quest_actions();
+        s.set_quest(Some(QuestState {
+            panel,
+            completable,
+            ..QuestState::default()
+        }));
+        s.fire_event(event, vec![]);
+        s.tick(0.05);
+        s.resolve();
+        s.run("BenillaControllerDialogue(0, true, false, true)")
+            .unwrap();
+        assert_eq!(
+            s.take_quest_actions(),
+            expected.into_iter().collect::<Vec<_>>()
+        );
+    }
+
+    s.set_quest(Some(QuestState {
+        panel: QuestPanel::Reward,
+        choices: vec![item("Worn Sword"), item("Worn Mace")],
+        ..QuestState::default()
+    }));
+    s.fire_event("QUEST_COMPLETE", vec![]);
+    s.resolve();
+    s.run("BenillaControllerDialogue(1, true, false, true)")
+        .unwrap();
+    assert_eq!(
+        s.eval::<i64>("return QuestInfoFrame.itemChoice").unwrap(),
+        2
+    );
+    assert!(s.take_quest_actions().is_empty());
+    s.run("BenillaControllerDialogue(0, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_quest_actions(), vec![QuestAction::Reward(1)]);
+}
+
 /// A reward row click selects its choice (`QuestInfo.lua:26-32`), and Complete sends it
 /// (`QuestFrame.lua:91-104`).
 #[test]

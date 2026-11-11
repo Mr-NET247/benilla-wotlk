@@ -116,6 +116,28 @@ fn the_stock_gossip_window_paints_both_quest_lists_and_the_options() {
     assert!(gossip_errors(s.take_errors()).is_empty());
 }
 
+#[test]
+fn controller_dialogue_selects_the_second_visible_gossip_option() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = loaded();
+    s.run(include_str!("../ipad/dialogue.lua")).unwrap();
+    s.set_gossip(Some(GossipMenu {
+        options: vec![option("First", "gossip"), option("Second", "gossip")],
+        ..Default::default()
+    }));
+    s.fire_event("GOSSIP_SHOW", vec![]);
+    s.resolve();
+
+    s.run("BenillaControllerDialogue(0, false, false, true)")
+        .unwrap();
+    s.run("BenillaControllerDialogue(1, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_gossip_selects(), vec![(2, None)]);
+}
+
 /// A lone service option skips the window and selects itself (`GossipFrame.lua`'s first branch),
 /// unless the NPC forces gossip.
 #[test]

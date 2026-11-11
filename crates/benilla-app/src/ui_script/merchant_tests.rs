@@ -1172,3 +1172,79 @@ fn shift_click_opens_the_split_on_a_stacking_row() {
     assert!(s.take_merchant_buys().is_empty());
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
+
+#[test]
+fn controller_merchant_buys_sells_and_uses_buyback() {
+    use benilla_ui::script::ContainerSlot;
+
+    benilla_formats::wow_data_or_skip!();
+    let mut s = stock_ui(1024.0, 768.0);
+    s.set_money(100_000);
+    s.set_container(
+        0,
+        Some(ContainerState {
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots: std::collections::HashMap::from([(
+                1,
+                ContainerSlot {
+                    item_id: 117,
+                    count: 2,
+                    texture: Some("Interface\\Icons\\INV_Misc_Food_16".into()),
+                    link: Some("|cffffffff|Hitem:117:0:0:0|h[Food]|h|r".into()),
+                    ..Default::default()
+                },
+            )]),
+            bag_family: 0,
+        }),
+    );
+    s.set_merchant(Some(MerchantState {
+        items: vec![MerchantItem {
+            name: Some("Water".into()),
+            texture: Some("Interface\\Icons\\INV_Drink_18".into()),
+            price: 25,
+            quantity: 1,
+            num_available: -1,
+            item_id: 159,
+            stats: None,
+            link: None,
+            max_stack: Some(1),
+            extended_cost: None,
+        }],
+        buyback: vec![MerchantItem {
+            name: Some("Old Sword".into()),
+            texture: Some("Interface\\Icons\\INV_Sword_04".into()),
+            price: 20,
+            quantity: 1,
+            num_available: 1,
+            item_id: 25,
+            ..Default::default()
+        }],
+        can_repair: false,
+    }));
+    s.fire_event("MERCHANT_SHOW", vec![ScriptValue::Str("Vendor".into())]);
+    s.resolve();
+    s.run(include_str!("../ipad/merchant.lua")).unwrap();
+
+    s.run("BenillaControllerMerchant(0, 0, 0, 0, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_merchant_buys(), vec![(1, 1)]);
+    s.run("BenillaControllerMerchant(0, 0, 1, 0, false, false, true)")
+        .unwrap();
+    s.resolve();
+    s.run("BenillaControllerMerchant(0, 0, 0, 0, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_container_uses(), vec![(0, 1)]);
+
+    s.run("BenillaControllerMerchant(0, 0, 1, 0, false, false, true)")
+        .unwrap();
+    s.resolve();
+    s.run("BenillaControllerMerchant(0, 0, 0, 0, true, false, true)")
+        .unwrap();
+    assert_eq!(s.take_merchant_buybacks(), vec![1]);
+    assert!(s.cursor_payload().is_none());
+
+    s.run("BenillaControllerMerchant(0, 0, 0, 0, false, true, true)")
+        .unwrap();
+    assert!(!s.eval::<bool>("return MerchantFrame:IsVisible()").unwrap());
+}
